@@ -1,16 +1,16 @@
-<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Gestión de Clientes</title>
-  <!-- Agregar aquí el código de Firebase proporcionado en la consola -->
+  <!-- Agregar Firebase SDKs de la CDN -->
   <script src="https://www.gstatic.com/firebasejs/9.1.0/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.1.0/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.1.0/firebase-firestore.js"></script>
 </head>
 <body>
   <h1>Gestión de Clientes</h1>
+
   <div>
     <h2>Agregar Cliente</h2>
     <input type="text" id="nombre" placeholder="Nombre">
@@ -18,10 +18,13 @@
     <input type="email" id="correo" placeholder="Correo">
     <button id="agregarCliente">Agregar Cliente</button>
   </div>
+
   <div>
     <h2>Lista de Clientes</h2>
     <ul id="listaClientes"></ul>
   </div>
+
+  
   <script>
     // Inicialización de Firebase (agrega aquí el código de configuración)
  // Inicialización de Firebase (agrega aquí el código de configuración)
@@ -40,11 +43,13 @@ const firebaseConfig = {
 };
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+ // Función para agregar un cliente
     const agregarClienteBtn = document.getElementById('agregarCliente');
     agregarClienteBtn.addEventListener('click', () => {
       const nombre = document.getElementById('nombre').value;
       const telefono = document.getElementById('telefono').value;
       const correo = document.getElementById('correo').value;
+
       db.collection('clientes').add({
         nombre: nombre,
         telefono: telefono,
@@ -61,9 +66,12 @@ const app = initializeApp(firebaseConfig);
         console.error('Error al agregar cliente: ', error);
       });
     });
+
+    // Función para cargar la lista de clientes
     function cargarClientes() {
       const listaClientes = document.getElementById('listaClientes');
       listaClientes.innerHTML = '';
+
       db.collection('clientes').get().then((querySnapshot) => {
         querySnapshot.forEach((doc) => {
           const cliente = doc.data();
@@ -73,6 +81,8 @@ const app = initializeApp(firebaseConfig);
         });
       });
     }
+
+    // Cargar clientes al inicio
     cargarClientes();
   </script>
 </body>
