@@ -24,7 +24,7 @@
     <h2>Lista de Clientes</h2>
     <ul id="listaClientes"></ul>
   </div>
-
+  dddddddd
   
   <script>
     // Inicialización de Firebase (agrega aquí el código de configuración)
@@ -44,7 +44,7 @@ const firebaseConfig = {
 };
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-    // Función para agregar un cliente
+  // Función para agregar un cliente
     const agregarClienteBtn = document.getElementById('agregarCliente');
     agregarClienteBtn.addEventListener('click', () => {
       const nombre = document.getElementById('nombre').value;
