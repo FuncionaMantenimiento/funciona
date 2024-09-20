@@ -81,6 +81,6 @@
   window.addEventListener('DOMContentLoaded', (event) => {
     cargarClientes();
   });
-
+</script>
 </body>
 </html>
