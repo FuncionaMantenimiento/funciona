@@ -1,9 +1,10 @@
+
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Gestión de Clientes</title>
-  <!-- Agregar Firebase SDKs de la CDN -->
+  <!-- Agregar Firebase SDKs desde CDN -->
   <script src="https://www.gstatic.com/firebasejs/9.1.0/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.1.0/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.1.0/firebase-firestore.js"></script>
@@ -43,7 +44,7 @@ const firebaseConfig = {
 };
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
- // Función para agregar un cliente
+    // Función para agregar un cliente
     const agregarClienteBtn = document.getElementById('agregarCliente');
     agregarClienteBtn.addEventListener('click', () => {
       const nombre = document.getElementById('nombre').value;
