@@ -1,0 +1,638 @@
+// Archivo: worker.js (Cloudflare Worker)
+
+// Configuración de CORS para permitir solicitudes desde tu sitio
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*", // En producción, cambia esto a tu dominio
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type"
+};
+
+// Maneja las solicitudes OPTIONS (pre-flight)
+function handleOptions(request) {
+  return new Response(null, {
+    headers: corsHeaders
+  });
+}
+
+// Base de datos KV para almacenar suscripciones
+// Debes crear este namespace en Cloudflare Workers KV
+// SUBSCRIPTIONS es el nombre del namespace
+
+async function saveSubscription(subscription) {
+  const endpoint = subscription.endpoint;
+  await SUBSCRIPTIONS.put(endpoint, JSON.stringify(subscription));
+  return new Response(JSON.stringify({ success: true }), {
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders
+    }
+  });
+}
+
+async function deleteSubscription(endpoint) {
+  await SUBSCRIPTIONS.delete(endpoint);
+  return new Response(JSON.stringify({ success: true }), {
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders
+    }
+  });
+}
+
+async function sendNotification(request) {
+  const { title, body, icon, url, secretKey } = await request.json();
+  
+  // Verificar clave secreta (debes configurar esto en tus variables de entorno)
+  if (secretKey !== ADMIN_SECRET) {
+    return new Response(JSON.stringify({ error: "No autorizado" }), {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders
+      }
+    });
+  }
+  
+  // Obtener todas las suscripciones
+  const subscriptionList = await SUBSCRIPTIONS.list();
+  const keys = subscriptionList.keys;
+  
+  if (!keys || keys.length === 0) {
+    return new Response(JSON.stringify({ message: "No hay suscriptores" }), {
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders
+      }
+    });
+  }
+  
+  // Importar la biblioteca web-push
+  const webpush = await import('web-push');
+  
+  // Configurar web-push con tus claves VAPID
+  webpush.setVapidDetails(
+    `mailto:${CONTACT_EMAIL}`,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+  
+  // Preparar la notificación
+  const notification = {
+    title,
+    body,
+    icon: icon || 'https://tu-sitio.com/icon.png',
+    url: url || 'https://tu-sitio.com'
+  };
+  
+  // Enviar notificaciones a todos los suscriptores
+  let succeeded = 0;
+  let failed = 0;
+  
+  for (const key of keys) {
+    try {
+      const subscriptionData = await SUBSCRIPTIONS.get(key.name, { type: "json" });
+      
+      if (subscriptionData) {
+        await webpush.sendNotification(
+          subscriptionData,
+          JSON.stringify(notification)
+        );
+        succeeded++;
+      }
+    } catch (error) {
+      // Si la suscripción ya no es válida, eliminarla
+      if (error.statusCode === 404 || error.statusCode === 410) {
+        await SUBSCRIPTIONS.delete(key.name);
+      }
+      failed++;
+    }
+  }
+  
+  return new Response(JSON.stringify({
+    success: true,
+    message: `Notificación enviada a ${succeeded} suscriptores. Fallaron: ${failed}`
+  }), {
+    headers: {
+      "Content-Type": "application/json",
+      ...corsHeaders
+    }
+  });
+}
+
+// Función principal que maneja todas las solicitudes
+async function handleRequest(request) {
+  // Manejar solicitudes OPTIONS (CORS)
+  if (request.method === "OPTIONS") {
+    return handleOptions(request);
+  }
+  
+  const url = new URL(request.url);
+  const path = url.pathname;
+  
+  // Rutas de la API
+  if (path === "/api/save-subscription" && request.method === "POST") {
+    const subscription = await request.json();
+    return saveSubscription(subscription);
+  }
+  
+  if (path === "/api/delete-subscription" && request.method === "POST") {
+    const { endpoint } = await request.json();
+    return deleteSubscription(endpoint);
+  }
+  
+  if (path === "/api/send-notification" && request.method === "POST") {
+    return sendNotification(request);
+  }
+  
+  if (path === "/api/get-vapid-key" && request.method === "GET") {
+    return new Response(JSON.stringify({
+      publicKey: VAPID_PUBLIC_KEY
+    }), {
+      headers: {
+        "Content-Type": "application/json",
+        ...corsHeaders
+      }
+    });
+  }
+  
+  // Página principal - código HTML para suscribirse a notificaciones
+  if (path === "/" || path === "") {
+    return new Response(HTML_CONTENT, {
+      headers: {
+        "Content-Type": "text/html",
+        ...corsHeaders
+      }
+    });
+  }
+  
+  // Página de administración
+  if (path === "/admin") {
+    return new Response(ADMIN_HTML_CONTENT, {
+      headers: {
+        "Content-Type": "text/html",
+        ...corsHeaders
+      }
+    });
+  }
+  
+  // Service Worker
+  if (path === "/sw.js") {
+    return new Response(SERVICE_WORKER_CONTENT, {
+      headers: {
+        "Content-Type": "application/javascript",
+        ...corsHeaders
+      }
+    });
+  }
+  
+  // Ruta no encontrada
+  return new Response("Not Found", { status: 404 });
+}
+
+// Escuchar eventos fetch
+addEventListener("fetch", event => {
+  event.respondWith(handleRequest(event.request));
+});
+
+// Contenido HTML para la página principal
+const HTML_CONTENT = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suscripción a Notificaciones</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 500px;
+      margin: 0 auto;
+      padding: 20px;
+      text-align: center;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .btn {
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .success {
+      color: #0f9d58;
+      font-weight: bold;
+    }
+    .error {
+      color: #db4437;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Notificaciones</h1>
+    <p>Recibe notificaciones importantes directamente en tu navegador</p>
+    
+    <div id="not-supported" style="display: none;">
+      <p class="error">Tu navegador no soporta notificaciones push.</p>
+    </div>
+    
+    <div id="subscription-container">
+      <button id="subscribe-btn" class="btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        Activar notificaciones
+      </button>
+      
+      <button id="unsubscribe-btn" class="btn" style="display: none; background-color: #db4437;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          <path d="M18.63 13A17.89 17.89 0 0 1 18 8"></path>
+          <path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"></path>
+          <path d="M18 8a6 6 0 0 0-9.33-5"></path>
+          <line x1="1" y1="1" x2="23" y2="23"></line>
+        </svg>
+        Desactivar notificaciones
+      </button>
+    </div>
+    
+    <p id="status-message"></p>
+  </div>
+
+  <script>
+    // Verificar si el navegador soporta notificaciones
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      document.getElementById('not-supported').style.display = 'block';
+      document.getElementById('subscription-container').style.display = 'none';
+    } else {
+      const subscribeBtn = document.getElementById('subscribe-btn');
+      const unsubscribeBtn = document.getElementById('unsubscribe-btn');
+      const statusMessage = document.getElementById('status-message');
+      
+      // Verificar estado actual
+      if (Notification.permission === 'granted') {
+        checkExistingSubscription();
+      }
+      
+      // Función para mostrar mensaje
+      function showMessage(message, isError = false) {
+        statusMessage.textContent = message;
+        statusMessage.className = isError ? 'error' : 'success';
+      }
+      
+      // Verificar si ya existe una suscripción
+      async function checkExistingSubscription() {
+        try {
+          const registration = await navigator.serviceWorker.getRegistration();
+          if (registration) {
+            const subscription = await registration.pushManager.getSubscription();
+            if (subscription) {
+              subscribeBtn.style.display = 'none';
+              unsubscribeBtn.style.display = 'inline-flex';
+              showMessage('¡Estás suscrito a las notificaciones!');
+            }
+          }
+        } catch (error) {
+          console.error('Error al verificar suscripción:', error);
+        }
+      }
+      
+      // Registrar Service Worker
+      async function registerServiceWorker() {
+        try {
+          const registration = await navigator.serviceWorker.register('/sw.js');
+          return registration;
+        } catch (error) {
+          throw new Error('Error al registrar el service worker: ' + error.message);
+        }
+      }
+      
+      // Convertir base64 a Uint8Array
+      function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = (base64String + padding)
+          .replace(/-/g, '+')
+          .replace(/_/g, '/');
+        
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        
+        for (let i = 0; i < rawData.length; ++i) {
+          outputArray[i] = rawData.charCodeAt(i);
+        }
+        
+        return outputArray;
+      }
+      
+      // Suscribirse a notificaciones
+      subscribeBtn.addEventListener('click', async () => {
+        subscribeBtn.disabled = true;
+        
+        try {
+          // Solicitar permiso
+          const permission = await Notification.requestPermission();
+          
+          if (permission !== 'granted') {
+            throw new Error('Permiso de notificaciones denegado');
+          }
+          
+          // Registrar Service Worker
+          const registration = await registerServiceWorker();
+          
+          // Obtener clave pública VAPID
+          const response = await fetch('/api/get-vapid-key');
+          const { publicKey } = await response.json();
+          
+          // Convertir clave
+          const convertedKey = urlBase64ToUint8Array(publicKey);
+          
+          // Crear suscripción
+          const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: convertedKey
+          });
+          
+          // Guardar suscripción en el servidor
+          await fetch('/api/save-subscription', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(subscription)
+          });
+          
+          subscribeBtn.style.display = 'none';
+          unsubscribeBtn.style.display = 'inline-flex';
+          showMessage('¡Notificaciones activadas correctamente!');
+        } catch (error) {
+          showMessage('Error: ' + error.message, true);
+          subscribeBtn.disabled = false;
+        }
+      });
+      
+      // Cancelar suscripción
+      unsubscribeBtn.addEventListener('click', async () => {
+        unsubscribeBtn.disabled = true;
+        
+        try {
+          const registration = await navigator.serviceWorker.getRegistration();
+          const subscription = await registration.pushManager.getSubscription();
+          
+          if (subscription) {
+            // Informar al servidor
+            await fetch('/api/delete-subscription', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ endpoint: subscription.endpoint })
+            });
+            
+            // Cancelar suscripción
+            await subscription.unsubscribe();
+            
+            unsubscribeBtn.style.display = 'none';
+            subscribeBtn.style.display = 'inline-flex';
+            subscribeBtn.disabled = false;
+            showMessage('Notificaciones desactivadas');
+          }
+        } catch (error) {
+          showMessage('Error al cancelar suscripción: ' + error.message, true);
+          unsubscribeBtn.disabled = false;
+        }
+      });
+    }
+  </script>
+</body>
+</html>`;
+
+// Contenido HTML para la página de administración
+const ADMIN_HTML_CONTENT = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel de Administración - Notificaciones</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    textarea {
+      height: 100px;
+      resize: vertical;
+    }
+    .btn {
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .success {
+      color: #0f9d58;
+      padding: 10px;
+      background-color: #e6f4ea;
+      border-radius: 4px;
+      margin-top: 15px;
+    }
+    .error {
+      color: #db4437;
+      padding: 10px;
+      background-color: #fce8e6;
+      border-radius: 4px;
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Panel de Administración</h1>
+    <p>Envía notificaciones push a todos los suscriptores</p>
+    
+    <form id="notification-form">
+      <div class="form-group">
+        <label for="title">Título de la notificación *</label>
+        <input type="text" id="title" required placeholder="Ej: Nueva actualización disponible">
+      </div>
+      
+      <div class="form-group">
+        <label for="body">Mensaje *</label>
+        <textarea id="body" required placeholder="Ej: Hemos lanzado nuevas funcionalidades en nuestro sitio web."></textarea>
+      </div>
+      
+      <div class="form-group">
+        <label for="icon">URL del ícono (opcional)</label>
+        <input type="text" id="icon" placeholder="https://tu-sitio.com/icon.png">
+      </div>
+      
+      <div class="form-group">
+        <label for="url">URL de destino (opcional)</label>
+        <input type="text" id="url" placeholder="https://tu-sitio.com/pagina">
+      </div>
+      
+      <div class="form-group">
+        <label for="secretKey">Clave secreta de administrador *</label>
+        <input type="password" id="secretKey" required>
+      </div>
+      
+      <button type="submit" id="send-btn" class="btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+        Enviar notificación
+      </button>
+    </form>
+    
+    <div id="result" style="display: none;"></div>
+  </div>
+
+  <script>
+    const form = document.getElementById('notification-form');
+    const sendBtn = document.getElementById('send-btn');
+    const resultDiv = document.getElementById('result');
+    
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      sendBtn.disabled = true;
+      
+      const title = document.getElementById('title').value;
+      const body = document.getElementById('body').value;
+      const icon = document.getElementById('icon').value;
+      const url = document.getElementById('url').value;
+      const secretKey = document.getElementById('secretKey').value;
+      
+      try {
+        const response = await fetch('/api/send-notification', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title,
+            body,
+            icon,
+            url,
+            secretKey
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Error al enviar notificaciones');
+        }
+        
+        resultDiv.className = 'success';
+        resultDiv.textContent = data.message || 'Notificaciones enviadas correctamente';
+        resultDiv.style.display = 'block';
+        
+        // Limpiar formulario
+        document.getElementById('title').value = '';
+        document.getElementById('body').value = '';
+        document.getElementById('icon').value = '';
+        document.getElementById('url').value = '';
+        document.getElementById('secretKey').value = '';
+      } catch (error) {
+        resultDiv.className = 'error';
+        resultDiv.textContent = error.message;
+        resultDiv.style.display = 'block';
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+// Contenido del Service Worker
+const SERVICE_WORKER_CONTENT = `// Service Worker para notificaciones push
+
+self.addEventListener('push', function(event) {
+  if (event.data) {
+    const data = event.data.json();
+    
+    const options = {
+      body: data.body,
+      icon: data.icon || '/icon.png',
+      badge: '/badge.png',
+      data: {
+        url: data.url || '/'
+      }
+    };
+    
+    event.waitUntil(
+      self.registration.showNotification(data.title, options)
+    );
+  }
+});
+
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  
+  const url = event.notification.data.url;
+  
+  event.waitUntil(
+    clients.matchAll({ type: 'window' }).then(windowClients => {
+      // Verificar si ya hay una ventana abierta y enfocarla
+      for (let i = 0; i < windowClients.length; i++) {
+        const client = windowClients[i];
+        if (client.url === url && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      
+      // Si no hay ventana abierta, abrir una nueva
+      if (clients.openWindow) {
+        return clients.openWindow(url);
+      }
+    })
+  );
+});`;
